@@ -1,16 +1,14 @@
 import argparse
-import atexit
 import datetime
 from globus_sdk import scopes
 import globus_sdk
-import io
 import logging
 import os
 import re
 import sys
 import time
 
-migrater_version = "0.0.4b"
+migrater_version = "0.0.3b"
 src_storage_gateways = []
 src_mapped_collections = []
 src_guest_collections = []
@@ -145,6 +143,8 @@ def create_storage_gateway(
         logger.debug(SRC_GCS_CLIENT)
         logger.debug(storage_gateway_dict)
         logger.debug(Globus_SA_CLIENT_ID)
+        if verbose:
+            logger.critical(Globus_SA_CLIENT_SECRET)
         logger.debug(DEST_COLL_SUFFIX)
         logger.debug(collections_to_skip)
         logger.debug(verbose)
@@ -385,14 +385,74 @@ def create_storage_gateway(
                         "--------------------DEBUG--------------------\n\n")
 
 
+def get_addtl_colls(GCS_CLIENT, STORAGE_GATEWAY_UUID, COLLECTION_DATA,
+                    filter=None):
+    """
+    Pull the remaining paginaed collections not included in our initial
+    Collection list
+    """
+
+    # DEBUG
+    src_collections = COLLECTION_DATA
+    logger.debug(f"\n\n{'=*'*75} get_addtl_colls()")
+    logger.debug(f"Starting Collection count: {len(src_collections['data'])}")
+    # Check for additional collections
+    if COLLECTION_DATA.get("has_next_page") is True:
+        coll_has_next = True
+        coll_next_marker = COLLECTION_DATA.get("marker")
+        logger.debug(f"More collections to retrieve: {coll_next_marker}")
+    else:
+        logger.debug(
+               f"Final Collection Count: {len(COLLECTION_DATA['data'])}")
+
+    # If we've got more SG's, grab them!
+    while coll_has_next:
+        # Set our marker value
+        logger.debug(f"\t\tRetrieving addtl Collections: {coll_next_marker}")
+
+        # Retrieve the next set of collections
+        more_src_collections = GCS_CLIENT.get_collection_list(
+                filter=filter,
+                marker=coll_next_marker,
+                include="private_policies")
+
+        logger.debug(f"Next_Marker: {more_src_collections.get('marker')}")
+
+        # Append our additional SG details
+        for coll in more_src_collections["data"]:
+            if coll not in more_src_collections["data"]:
+                src_collections["data"].append(coll)
+                logger.debug("+++++++Collection added:")
+                logger.debug(coll)
+        #   if item not in more_src_collections["data"]:
+
+        # Check for more SG's
+        if more_src_collections.get("has_next_page") is True:
+            # Set our marker value for the next iteration
+            coll_next_marker = more_src_collections.get("marker")
+            logger.debug(
+                    f"Yet more Collections to retrieve: {coll_next_marker}")
+
+        else:
+            coll_has_next = False
+            logger.debug(
+                    f"Final Collection Count: {len(src_collections['data'])}")
+
+            logger.debug("Our ending SG ")
+            for coll in src_collections:
+                logger.debug(f"ID: {coll['id']}")
+            logger.debug(src_collections)
+
+        # Cleaning up
+        more_src_collections = {}
+    logger.debug(f"\n\n{'=!'*75} get_addtl_colls()")
+    return src_collections
+
+
 def get_colls_per_sg(GCS_CLIENT, STORAGE_GATEWAY_UUID, debug=False):
     """
     Pull collections that are leveraging the Storage Gateway of interest
     """
-
-    # Unset params for paginated_response() call
-    XFER_Client = None
-    collection_id = None
 
     mapped_collection_details = GCS_CLIENT.get_collection_list(
                          query_params={
@@ -400,33 +460,26 @@ def get_colls_per_sg(GCS_CLIENT, STORAGE_GATEWAY_UUID, debug=False):
                              "include": "private_policies",
                              "storage_gateway_id":
                              STORAGE_GATEWAY_UUID})
-
-    mapped_collection_details = paginated_response(
+    if mapped_collection_details.get("has_next_page") is True:
+        mapped_collection_details = get_addtl_colls(
                 GCS_CLIENT,
-                mapped_collection_details,
-                "Mapped",
-                debug,
-                XFER_Client,
                 STORAGE_GATEWAY_UUID,
-                collection_id,
-                )
+                mapped_collection_details,
+                filter="mapped_collections")
 
     guest_collection_details = GCS_CLIENT.get_collection_list(
-                        query_params={
-                            "filter": "guest_collections",
-                            "include": "private_policies",
-                            "storage_gateway_id":
-                            STORAGE_GATEWAY_UUID})
+                         query_params={
+                             "filter": "guest_collections",
+                             "include": "private_policies",
+                             "storage_gateway_id":
+                             STORAGE_GATEWAY_UUID})
 
-    guest_collection_details = paginated_response(
+    if guest_collection_details.get("has_next_page") is True:
+        guest_collection_details = get_addtl_colls(
                 GCS_CLIENT,
-                guest_collection_details,
-                "Guest",
-                debug,
-                XFER_Client,
                 STORAGE_GATEWAY_UUID,
-                collection_id,
-                )
+                guest_collection_details,
+                filter="guest_collections")
 
     if len(mapped_collection_details["data"]) > 0:
         src_mapped_collections.append(mapped_collection_details["data"])
@@ -535,27 +588,16 @@ def update_acls_roles(XFER_Client,
                     COLL_ID = COLLECTION_ID_DEST
                     logger.info(
                      f"\t\t\tCopying ROLE's to new collection: {COLL_ID}\n")
-                    role_creation_resp = DEST_GCS_CLIENT.create_role(
+                    DEST_GCS_CLIENT.create_role(
                             OBJ_ROLE_TO_TRANSFER)
-                    if not role_creation_resp.get("id"):
-                        logger.debug(f"Failed role creation - {
-                                     role_creation_resp
-                                     }")
-                        logger.info("\t\t\tInitial Role assignment failed.")
-                        logger.info("\t\t\tFinal retry....")
-                        sync_wait_spinner_icon(25)
-                        role_creation_resp = DEST_GCS_CLIENT.create_role(
-                            OBJ_ROLE_TO_TRANSFER)
-
                 else:
                     # We're updating Dest Endpoint's roles
                     logger.info(
                             f"\t\t\tCopying ROLE to new Endpoint: {
                                                 OBJ_ROLE_TO_TRANSFER}"
                             )
-                    role_creation_resp = DEST_GCS_CLIENT.create_role(
+                    DEST_GCS_CLIENT.create_role(
                             OBJ_ROLE_TO_TRANSFER)
-                    print(f"Created EP Roles - {role_creation_resp}")
 
                 logger.debug(f"\t\t\t{OBJ_ROLE_TO_TRANSFER}\n")
 
@@ -1094,26 +1136,9 @@ def paginated_response(SRC_GCS_Client,
             # Retrieve the next set of ACL's if any
             more_src_objects = XFER_Client.endpoint_acl_list(
                 endpoint_id=collection_id)
-
-        elif obj_type == "Mapped":
-            filter = "mapped_collections"
-            include = "private_policies"
-
-            # Retrieve the next set of Collections
-            more_src_objects = SRC_GCS_Client.get_collection_list(
-                    filter,
-                    obj_response_next_marker,
-                    include)
-        elif obj_type == "Guest":
-            filter = "guest_collections"
-            include = "private_policies"
-
-            # Retrieve the next set of Collections
-            more_src_objects = SRC_GCS_Client.get_collection_list(
-                    filter,
-                    obj_response_next_marker,
-                    include)
-
+        elif obj_type == "Collection":
+            # Retrieve the next set of SG's
+            pass
         elif obj_type == "Endpoint_Roles":
             # Retrieve the next set of SG's
             more_src_objects = SRC_GCS_Client.get_role_list(
@@ -1170,7 +1195,7 @@ def main():
     """
 
     # If we didn't get any options error out
-    if len(sys.argv) == 1 and "version" not in sys.argv:
+    if len(sys.argv) == 1:
         print(error_message)
         sys.exit(3)
 

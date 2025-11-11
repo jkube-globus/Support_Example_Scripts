@@ -8,7 +8,7 @@ import re
 import sys
 import time
 
-migrater_version = "0.0.3b"
+migrater_version = "0.0.4b"
 src_storage_gateways = []
 src_mapped_collections = []
 src_guest_collections = []
@@ -155,6 +155,9 @@ def create_storage_gateway(
     # storage_gateway_details = []
     GLOBUS_SA = f"{Globus_SA_CLIENT_ID}@clients.auth.globus.org"
     for sg in storage_gateway_dict["data"]:
+        # If an Intra Endpoint copy, update SG display_name to avoid conflict
+        if SRC_GCS_CLIENT == DEST_GCS_CLIENT:
+            sg["display_name"] = sg["display_name"] + DEST_COLL_SUFFIX
         if debug:
             logger.info("Here's our SG:")
             logger.info(sg)
@@ -1345,13 +1348,21 @@ def main():
     SRC_GCS_Client = get_gcs_client(SRC_GCS_MANAGER_DOMAIN_NAME,
                                     src_gcs_authorizer)
 
-    # Setup our Dest GCS client for Storage-Gateway/Collection actions
-    dest_gcs_authorizer = get_scopes(Globus_SA_CLIENT_ID,
-                                     Globus_SA_CLIENT_SECRET,
-                                     DEST_ENDPOINT_ID)
+    if SRC_ENDPOINT_ID != DEST_ENDPOINT_ID:
+        # Setup our Dest GCS client for Storage-Gateway/Collection actions
+        dest_gcs_authorizer = get_scopes(Globus_SA_CLIENT_ID,
+                                         Globus_SA_CLIENT_SECRET,
+                                         DEST_ENDPOINT_ID)
 
-    DEST_GCS_Client = get_gcs_client(DEST_GCS_MANAGER_DOMAIN_NAME,
-                                     dest_gcs_authorizer)
+        DEST_GCS_Client = get_gcs_client(DEST_GCS_MANAGER_DOMAIN_NAME,
+                                         dest_gcs_authorizer)
+    elif DEST_COLL_SUFFIX != '':
+        # If an intra-Endpoint copy, re-use our pre-existing/valid GCS client
+        DEST_GCS_Client = SRC_GCS_Client
+    else:
+        print("""
+        When performing an intra-Endpoint copy the
+           "--dst_collection_suffix" option must be provided.""")
 
     # Get initial source Storage Gateway and Mapped Collection detalis
     logger.info("Retrieving source Endpoint details")

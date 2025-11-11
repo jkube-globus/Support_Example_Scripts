@@ -1356,9 +1356,13 @@ def main():
 
         DEST_GCS_Client = get_gcs_client(DEST_GCS_MANAGER_DOMAIN_NAME,
                                          dest_gcs_authorizer)
-    else:
+    elif DEST_COLL_SUFFIX != '':
         # If an intra-Endpoint copy, re-use our pre-existing/valid GCS client
         DEST_GCS_Client = SRC_GCS_Client
+    else:
+        print("""
+        When performing an intra-Endpoint copy the
+           "--dst_collection_suffix" option must be provided.""")
 
     # Get initial source Storage Gateway and Mapped Collection detalis
     logger.info("Retrieving source Endpoint details")

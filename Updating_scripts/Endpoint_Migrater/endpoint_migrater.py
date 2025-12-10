@@ -8,7 +8,7 @@ import re
 import sys
 import time
 
-migrater_version = "0.0.4b"
+migrater_version = "0.0.5b"
 src_storage_gateways = []
 src_mapped_collections = []
 src_guest_collections = []
@@ -156,6 +156,8 @@ def create_storage_gateway(
     GLOBUS_SA = f"{Globus_SA_CLIENT_ID}@clients.auth.globus.org"
     for sg in storage_gateway_dict["data"]:
         # If an Intra Endpoint copy, update SG display_name to avoid conflict
+        sg["display_name"] = sg["display_name"] + DEST_COLL_SUFFIX
+
         if SRC_GCS_CLIENT == DEST_GCS_CLIENT:
             sg["display_name"] = sg["display_name"] + DEST_COLL_SUFFIX
         if debug:
@@ -423,10 +425,10 @@ def get_addtl_colls(GCS_CLIENT, STORAGE_GATEWAY_UUID, COLLECTION_DATA,
 
         # Append our additional SG details
         for coll in more_src_collections["data"]:
-            if coll not in more_src_collections["data"]:
-                src_collections["data"].append(coll)
-                logger.debug("+++++++Collection added:")
-                logger.debug(coll)
+            #   if coll not in more_src_collections["data"]:
+            src_collections["data"].append(coll)
+            logger.debug("+++++++Collection added:")
+            logger.debug(coll)
         #   if item not in more_src_collections["data"]:
 
         # Check for more SG's
